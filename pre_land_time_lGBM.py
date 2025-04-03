@@ -1,4 +1,4 @@
-import holidays
+from datetime import datetime
 import lightgbm as lgb
 import pandas as pd
 import numpy as np
@@ -6,112 +6,117 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import mean_squared_error
 from sklearn.feature_selection import RFE
 import matplotlib.pyplot as plt
-from final_product_data import land_rate_data  # 假设数据已经准备好
-
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from get_land_data import land_data as ld  # 假设数据已经准备好
+from get_land_speed_data import china_holidays
 
 force_col_wise= True
-# ======================
+
 # 1. 数据准备与预处理
-# ======================
-# 这里假设 land_rate_data 已包含预测目标 'pre_land_time' 和其他特征
-data1 = land_rate_data.copy()
-#print(max(data1["road_factor"]),min(data1["road_factor"]))
-# 示例代码（以陆运数据为例）
-data_land = data1.drop(columns=[
-    'time_factor', 'cargo_factor', 'truck_factors','truck_level','road',
-     #'weather_factor_land', 'wind_factors',
-    'factor','weather',
-    'land_rate',  'buffer_factor',
-])
+# 这里假设 land_data 已包含预测目标 'pre_land_time' 和其他特征
+def get_time_state(t):
+    t = t.split(' ')[1]
+    hour = int(t.split(':')[0])
+    if 7 <= hour < 9:
+        t_state = "早高峰"
+    elif 17 <= hour < 19:
+        t_state = "晚高峰"
+    elif 9 <= hour < 17:
+        t_state = "白天"
+    else:
+        t_state = "夜间"
+    return t_state
 
-#实验性删除缓冲和相关速率的特征，模型过于依赖直接特征，忽视间接特征
-data_land=data_land.drop(columns=['port_rate','buffer_amout'])
+def get_holiday_state(t):
+    date = datetime.strptime(t, "%Y-%m-%d %H:%M:%S")  # 转换为 datetime 类型
+    if date in china_holidays:
+        if "春节" in china_holidays[date] or "国庆" in china_holidays[date]:
+            return "大长假"
+        return "小长假"
+    elif date.weekday() in [5, 6]:
+        return "周末"
+    else:
+        return "工作日"
 
-#print(data_land)
-# 1. 处理时间字段：将 time 转换为 datetime，并提取日期时间特征
-data_land['time'] = pd.to_datetime(data_land['time'])
-#data_land['year']   = data_land['time'].dt.year
-data_land['month']  = data_land['time'].dt.month
-data_land['day']    = data_land['time'].dt.day
-data_land['hour']   = data_land['time'].dt.hour
-data_land['minute'] = data_land['time'].dt.minute
-data_land['day_of_week'] = data_land['time'].dt.dayofweek
-china_holidays = holidays.China(years=[2024, 2025])
-data_land['is_holiday'] = data_land['time'].dt.date.apply(lambda x: x in china_holidays).astype(int)
-data_land['is_weekend'] = (data_land['day_of_week'] >= 5).astype(int)
+data=pd.DataFrame()
+#处理顺序型
+data["time_type"]=[get_time_state(t) for t in ld['time']]
+data["cargo_type"]=ld["cargo_type"]
+data["truck_state"]=ld["truck_level"]
+data["road_state"]=ld["road"]
+data["weather"]=ld["weather"]
+data["wind"]=[int(w) for w in ld["wind"]]
+data["buffer"]=ld["buffer"]
+data["holiday_type"]=[get_holiday_state(t) for t in ld['time']]
+# 定义所有有序分类变量的映射
+mappings = {
+    'time_type': {'晚高峰': 1, '早高峰': 2, '夜间': 3,'白天':4},
+    'holiday_type':{"工作日": 1, "周末": 2, "小长假": 3, "大长假": 4},
+    'cargo_type': {'D': 1, 'C': 2, 'B': 3,'A':4},
+    'truck_state':{"优": 1, "良": 2, "中": 3, "差": 4, "极差": 5},
+    'road_state':{"优": 1, "良": 2, "中": 3, "差": 4, "极差": 5},
+    'weather':{"晴": 1, "阴": 2, "多云":3, "小雨": 4, "中雨": 5,
+               "大雨": 6,  "暴雨":7,  "雨夹雪": 8, "雾": 9},
+    'wind':{ 1:1,2:2,3:3,4:4,5:5,
+       6:6,7:7,8:8,9:9,10:10},
+    'buffer':{"无":1,"有":2 }
+}
+categorical_features = ['time_type', 'holiday_type', 'truck_state',
+                        'road_state', 'weather', 'wind', 'buffer', 'cargo_type']
 
-data_land=data_land.drop(columns=["time"])
-# 构造时间周期性编码（捕捉早晚高峰,时间因子）
-data_land['hour_sin'] = np.sin(2 * np.pi * data_land['hour'] / 24)
-data_land['hour_cos'] = np.cos(2 * np.pi * data_land['hour'] / 24)
-
-时间四个类
-天气
-风力
-
+# 逐列转换
+for col, mapping in mappings.items():
+    data[col] = data[col].map(mapping)
+data["pre_land_time"]=ld["pre_land_time"]
+data["port_rate"]=ld["port_rate"]
+data["land_rate"]=ld["land_rate"]
 # 将其他需要为数值型的字段转换为数值
-numeric_cols_land = [ 'truck_num','winds','wind_factors','weather_factor_land','month','day','hour','minute', 'day_of_week', 'cargo_num', 'pre_land_time']
-for col in numeric_cols_land:
-    if col in data_land.columns:
-        data_land[col] = pd.to_numeric(data_land[col], errors='coerce')
 
-# 2.对车辆特征处理,标准化
-from sklearn.preprocessing import StandardScaler
-data_land['truck_num_scaled'] = StandardScaler().fit_transform(data_land[['truck_num']])
-# 构造性能-数量交互特征
-data_land['truck_total_perf'] = data_land['truck_num'] * data_land['truck_perf']
+scaler = MinMaxScaler(feature_range=(0.1, 4))
+data[['truck_num','cargo_num', ]] = scaler.fit_transform(ld[['truck_num','cargo_num']])
 
-车辆有序的
-
-车辆数量
-
-
-#3.货物类型有序
-
-data_land = pd.get_dummies(data_land, columns=["cargo_type"])
-
-
+# 使用分位数截断（保留98%数据）
+q_low = data['pre_land_time'].quantile(0.01)
+q_high = data['pre_land_time'].quantile(0.99)
+data = data[(data['pre_land_time'] > q_low) & (data['pre_land_time'] < q_high)]
 #处理后的训练原始数据集，写入文件
-data_land.to_excel('land_train_data.xlsx', sheet_name='Sheet1', index=False)
+data.to_excel('land_train_data.xlsx', sheet_name='Sheet1', index=False)
 
-
-#print(data_land.iloc[:5,:])
-#print("=== land_rate_data 的数据类型 ===")
-#print(data_land.dtypes)
 
 # 划分特征和目标
-y1 = data_land['pre_land_time']
-X1 = data_land.drop('pre_land_time', axis=1)
-
+y1 = data['pre_land_time']
+X1 = data.drop('pre_land_time', axis=1)
 
 # 划分训练集/测试集
 X_train, X_test, y_train, y_test = train_test_split(X1, y1, test_size=0.2, random_state=42)
-
 
 # 再从训练集中划分 20% 验证集
 X_train_part, X_valid_part, y_train_part, y_valid_part = train_test_split(
     X_train, y_train, test_size=0.2, random_state=42
 )
-# ======================
+
 # 2. 模型训练（基础版）
-# ======================
 # 创建 LightGBM 数据集对象
-train_dataset= lgb.Dataset(X_train, label=y_train)
-valid_dataset = lgb.Dataset(X_valid_part, label=y_valid_part, reference=train_dataset)
+train_dataset= lgb.Dataset(X_train, label=y_train,categorical_feature=categorical_features)
+valid_dataset = lgb.Dataset(X_valid_part, label=y_valid_part,categorical_feature=categorical_features, reference=train_dataset)
 
 # 参数设置：回归任务，使用 rmse 评估指标
 params = {
     'objective': 'regression',
     'metric': 'rmse',
-    'learning_rate': 0.05,
-    'max_depth': 10,          # 减少深度，防止过拟合
-    'n_estimators': 200,     # 增加树数量，配合低学习率
-    'num_leaves': 20,        # 允许更灵活的分裂
-    'reg_alpha': 0.1,        # L1 正则化
-    'reg_lambda': 0.1  ,      # L2 正则化
-    'feature_fraction': 0.7,  # 每次分裂随机选择70%特征，强制探索 truck_level
-    'min_data_in_leaf': 5,
-    'verbose': -1  # 不显示日志
+    'learning_rate': 0.015,  # 降低学习率
+    'num_leaves': 255,  # 限制叶子数，防止过拟合
+    'max_depth': 12,  # 限制树的深度
+    'min_data_in_leaf': 30,  # 增大叶子节点的最小样本数
+    'lambda_l1': 2,  # 增加 L1 正则化
+    'lambda_l2': 1.5,  # 增加 L2 正则化
+    'feature_fraction': 0.7,  # 降低特征使用比例
+    'bagging_fraction': 0.7,  # 采样 70% 数据
+    'bagging_freq': 5,
+    'min_split_gain': 0.01,
+    'cat_smooth': 30,  # 改善分类变量处理
+   # 'boosting_type': 'dart' , # 使用DART模式应对异常值
+    'verbosity': -1
 }
 
 # 训练模型，使用早停（这里只使用训练集做验证，实际项目中可使用独立验证集）
@@ -123,8 +128,24 @@ model = lgb.train(
     valid_names=["train", "valid"],
     callbacks=[lgb.early_stopping(10)]
 )
-
-# ======================
+te=pd.DataFrame({
+    "time_type": 3,
+    "cargo_type": 2,
+    "truck_state": 2,
+    "road_state": 2,
+    "weather": 5,
+    "wind": 9,
+    "buffer": 1,
+    "holiday_type": 3,
+    #"pre_land_time": 359.0748706,
+    "port_rate": 0.823004,
+    "land_rate": 1.11448064,
+    "truck_num": 2.7,
+    "cargo_num": 1.982153122
+},index=[0])
+y_pre=model.predict(te)
+print(y_pre)
+#lgb.plot_tree(model,tree_index=0)
 '''
 # 3. 超参数优化（网格搜索）
 # ======================
@@ -148,36 +169,31 @@ best_model = grid.best_estimator_
 # 4. 特征选择
 # ======================
 # 方法1：基于特征重要性
+lgb.plot_importance(model)
 importance = model.feature_importance()
 feature_names = X1.columns
 print("特征重要性:")
 for name, score in zip(feature_names, importance):
     print(f"  {name}: {score}")
-
+'''
 import shap
 explainer = shap.TreeExplainer(model)
 shap_values = explainer.shap_values(X1)
 shap.summary_plot(shap_values, X1)
+'''
 
+'''
 # 方法2：递归特征消除（RFE）— 使用 LGBMRegressor 进行特征选择
 selector = RFE(estimator=lgb.LGBMRegressor())
 selector.fit(X_train, y_train)
 print("被选中的特征:", X1.columns[selector.support_].tolist())
+'''
 
-# 计算特征的方差
-feature_variance = X_train.var()
-print("特征方差:\n", feature_variance)
-
-low_variance_features = feature_variance[feature_variance < 0.05].index
-print("低方差特征的唯一值个数:")
-print(X_train[low_variance_features].nunique())
-
-
-
-# ======================
 # 5. 模型评估
-# ======================
 #训练集误差
+from sklearn.model_selection import KFold
+import lightgbm as lgb
+import numpy as np
 
 y_trpre = model.predict(X_train)
 mse = mean_squared_error(y_train, y_trpre)

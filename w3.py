@@ -144,13 +144,13 @@ def toanalysis(response):
         "daily_records": table_data
     }
 
-    # 将结果转换为JSON格式并打印7
+    # 将结果转换为JSON格式并打印
     json_output = json.dumps(weather_data, ensure_ascii=False, indent=4)
     # 将 JSON 字符串解析回 Python 字典
     datas = json.loads(json_output)
     return datas
 
-def toExcel(df, file_path="data.xlsx", sheet_name="Sheet1", reset=False,):
+def toExcel(df, file_path="weather_data.xlsx", sheet_name="Sheet1", reset=False,):
     """
     @rest重置表格sheet数据参数
     print(f"数据已写入 {file_path} 的 {sheet_name}，{'重置' if reset else '追加'}模式")
@@ -179,14 +179,14 @@ def toExcel(df, file_path="data.xlsx", sheet_name="Sheet1", reset=False,):
             with pd.ExcelWriter(file_path, mode='w', engine='openpyxl') as writer:
                 df_daily_records.to_excel(writer, sheet_name=sheet_name, index=False)
 if __name__ == "__main__":
-    jsondata=getjson(year=2025,month=3)
-    pandasdata = toanalysis(jsondata)
-
-    # 将 daily_records 转换为 DataFrame
     try:
-        df_daily_records = pd.DataFrame(pandasdata['daily_records'])
-        toExcel(df_daily_records, file_path="data.xlsx", sheet_name="sheet1", reset=False)
-        print(df_daily_records)
+        for i in range(1,13):
+            jsondata=getjson(year=2020,month=i)
+            pandasdata = toanalysis(jsondata)
+        # 将 daily_records 转换为 DataFrame
+            df_daily_records = pd.DataFrame(pandasdata['daily_records'])
+            toExcel(df_daily_records, file_path="weather_data.xlsx", sheet_name="sheet1", reset=False)
+            print(df_daily_records)
     except TypeError as e:
         print(f"遇到类型错误: {e}")
         print("请检查输入的数据是否与预期相符。")
