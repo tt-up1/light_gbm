@@ -79,6 +79,13 @@ data[['truck_num','cargo_num', ]] = scaler.fit_transform(ld[['truck_num','cargo_
 q_low = data['pre_land_time'].quantile(0.01)
 q_high = data['pre_land_time'].quantile(0.99)
 data = data[(data['pre_land_time'] > q_low) & (data['pre_land_time'] < q_high)]
+
+# 对出现次数<5的类别合并
+for col in ['road_state', 'weather',]:
+    counts = data[col].value_counts()
+    rare_cats = counts[counts < 5].index
+    data[col] = data[col].replace(rare_cats, -1)
+
 #处理后的训练原始数据集，写入文件
 data.to_excel('land_train_data.xlsx', sheet_name='Sheet1', index=False)
 
@@ -100,6 +107,12 @@ X_train_part, X_valid_part, y_train_part, y_valid_part = train_test_split(
 train_dataset= lgb.Dataset(X_train, label=y_train,categorical_feature=categorical_features)
 valid_dataset = lgb.Dataset(X_valid_part, label=y_valid_part,categorical_feature=categorical_features, reference=train_dataset)
 
+# 对有序分类变量设置单调约束（以time_type为例）
+monotone_constraints =[1 if col in ['time_type','weather',
+                         'road_state','holiday_type','truck_state',
+                         'weather','wind', 'buffer','cargo_type'] else 0 for col in X_train.columns.tolist()]
+
+
 # 参数设置：回归任务，使用 rmse 评估指标
 params = {
     'objective': 'regression',
@@ -116,17 +129,23 @@ params = {
     'min_split_gain': 0.01,
     'cat_smooth': 30,  # 改善分类变量处理
    # 'boosting_type': 'dart' , # 使用DART模式应对异常值
-    'verbosity': -1
+    'verbosity': -1,
+    'monotone_constraints': monotone_constraints,  # 正确的列表格式
 }
+
 
 # 训练模型，使用早停（这里只使用训练集做验证，实际项目中可使用独立验证集）
 model = lgb.train(
     params,
     train_dataset,
-    num_boost_round=500,
-    valid_sets=[train_dataset,valid_dataset],
-    valid_names=["train", "valid"],
-    callbacks=[lgb.early_stopping(10)]
+    num_boost_round=2000,
+    valid_sets=[valid_dataset,train_dataset],
+    valid_names=["valid","train"],
+    callbacks=[lgb.early_stopping(10),
+            lgb.reset_parameter(learning_rate=[
+             0.1 if i < 100 else 0.02 if i < 500 else 0.01
+                for i in range(2000)])
+               ]
 )
 te=pd.DataFrame({
     "time_type": 3,
