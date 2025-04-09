@@ -50,7 +50,7 @@ data["buffer"]=ld["buffer"]
 data["holiday_type"]=[get_holiday_state(t) for t in ld['time']]
 # 定义所有有序分类变量的映射
 mappings = {
-    'time_type': {'晚高峰': 1, '早高峰': 2, '夜间': 3,'白天':4},
+    'time_type': {'白天':1,'夜间': 2,'早高峰': 3,'晚高峰': 4},
     'holiday_type':{"工作日": 1, "周末": 2, "小长假": 3, "大长假": 4},
     'cargo_type': {'D': 1, 'C': 2, 'B': 3,'A':4},
     'truck_state':{"优": 1, "良": 2, "中": 3, "差": 4, "极差": 5},
@@ -59,14 +59,16 @@ mappings = {
                "大雨": 6,  "暴雨":7,  "雨夹雪": 8, "雾": 9},
     'wind':{ 1:1,2:2,3:3,4:4,5:5,
        6:6,7:7,8:8,9:9,10:10},
-    'buffer':{"无":1,"有":2 }
+    'buffer':{"有":1,"无":2}
 }
+'''
 categorical_features = ['time_type', 'holiday_type', 'truck_state',
                         'road_state', 'weather', 'wind', 'buffer', 'cargo_type']
-
+'''
 # 逐列转换
 for col, mapping in mappings.items():
     data[col] = data[col].map(mapping)
+
 data["pre_land_time"]=ld["pre_land_time"]
 data["port_rate"]=ld["port_rate"]
 data["land_rate"]=ld["land_rate"]
@@ -104,13 +106,13 @@ X_train_part, X_valid_part, y_train_part, y_valid_part = train_test_split(
 
 # 2. 模型训练（基础版）
 # 创建 LightGBM 数据集对象
-train_dataset= lgb.Dataset(X_train, label=y_train,categorical_feature=categorical_features)
-valid_dataset = lgb.Dataset(X_valid_part, label=y_valid_part,categorical_feature=categorical_features, reference=train_dataset)
+train_dataset= lgb.Dataset(X_train, label=y_train)
+valid_dataset = lgb.Dataset(X_valid_part, label=y_valid_part, reference=train_dataset)
 
 # 对有序分类变量设置单调约束（以time_type为例）
-monotone_constraints =[1 if col in ['time_type','weather',
+monotone_constraints =[-1 if col in ['time_type','weather',
                          'road_state','holiday_type','truck_state',
-                         'weather','wind', 'buffer','cargo_type'] else 0 for col in X_train.columns.tolist()]
+                         'wind', 'buffer','cargo_type'] else 0 for col in X_train.columns.tolist()]
 
 
 # 参数设置：回归任务，使用 rmse 评估指标
