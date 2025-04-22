@@ -7,91 +7,17 @@ from sklearn.metrics import mean_squared_error
 from sklearn.feature_selection import RFE
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
-from get_land_data import land_data as ld  # 假设数据已经准备好
-from get_land_speed_data import china_holidays
+
+import preData
 
 force_col_wise= True
 
-# 1. 数据准备与预处理
-# 这里假设 land_data 已包含预测目标 'pre_land_time' 和其他特征
-def get_time_state(t):
-    t = t.split(' ')[1]
-    hour = int(t.split(':')[0])
-    if 7 <= hour < 9:
-        t_state = "早高峰"
-    elif 17 <= hour < 19:
-        t_state = "晚高峰"
-    elif 9 <= hour < 17:
-        t_state = "白天"
-    else:
-        t_state = "夜间"
-    return t_state
-
-def get_holiday_state(t):
-    date = datetime.strptime(t, "%Y-%m-%d %H:%M:%S")  # 转换为 datetime 类型
-    if date in china_holidays:
-        if "春节" in china_holidays[date] or "国庆" in china_holidays[date]:
-            return "大长假"
-        return "小长假"
-    elif date.weekday() in [5, 6]:
-        return "周末"
-    else:
-        return "工作日"
-
-data=pd.DataFrame()
-#处理顺序型
-data["time_type"]=[get_time_state(t) for t in ld['time']]
-data["cargo_type"]=ld["cargo_type"]
-data["truck_state"]=ld["truck_level"]
-data["road_state"]=ld["road"]
-data["weather"]=ld["weather"]
-data["wind"]=[int(w) for w in ld["wind"]]
-data["buffer"]=ld["buffer"]
-data["holiday_type"]=[get_holiday_state(t) for t in ld['time']]
-# 定义所有有序分类变量的映射
-mappings = {
-    'time_type': {'白天':1,'夜间': 2,'早高峰': 3,'晚高峰': 4},
-    'holiday_type':{"工作日": 1, "周末": 2, "小长假": 3, "大长假": 4},
-    'cargo_type': {'D': 1, 'C': 2, 'B': 3,'A':4},
-    'truck_state':{"优": 1, "良": 2, "中": 3, "差": 4, "极差": 5},
-    'road_state':{"优": 1, "良": 2, "中": 3, "差": 4, "极差": 5},
-    'weather':{"晴": 1, "阴": 2, "多云":3, "小雨": 4, "中雨": 5,
-               "大雨": 6,  "暴雨":7,  "雨夹雪": 8, "雾": 9},
-    'wind':{ 1:1,2:2,3:3,4:4,5:5,
-       6:6,7:7,8:8,9:9,10:10},
-    'buffer':{"有":1,"无":2}
-}
+# preData.creatTrainData()
+data=preData.getTrainData()
 '''
 categorical_features = ['time_type', 'holiday_type', 'truck_state',
                         'road_state', 'weather', 'wind', 'buffer', 'cargo_type']
 '''
-# 逐列转换
-for col, mapping in mappings.items():
-    data[col] = data[col].map(mapping)
-
-data["pre_land_time"]=ld["pre_land_time"]
-data["port_rate"]=ld["port_rate"]
-data["land_rate"]=ld["land_rate"]
-# 将其他需要为数值型的字段转换为数值
-
-scaler = MinMaxScaler(feature_range=(0.1, 4))
-data[['truck_num','cargo_num', ]] = scaler.fit_transform(ld[['truck_num','cargo_num']])
-
-# 使用分位数截断（保留98%数据）
-q_low = data['pre_land_time'].quantile(0.01)
-q_high = data['pre_land_time'].quantile(0.99)
-data = data[(data['pre_land_time'] > q_low) & (data['pre_land_time'] < q_high)]
-
-# 对出现次数<5的类别合并
-for col in ['road_state', 'weather',]:
-    counts = data[col].value_counts()
-    rare_cats = counts[counts < 5].index
-    data[col] = data[col].replace(rare_cats, -1)
-
-#处理后的训练原始数据集，写入文件
-data.to_excel('land_train_data.xlsx', sheet_name='Sheet1', index=False)
-
-
 # 划分特征和目标
 y1 = data['pre_land_time']
 X1 = data.drop('pre_land_time', axis=1)
@@ -104,22 +30,60 @@ X_train_part, X_valid_part, y_train_part, y_valid_part = train_test_split(
     X_train, y_train, test_size=0.2, random_state=42
 )
 
+#查看y的分布
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# # 假设y_train是你的目标变量
+plt.figure(figsize=(15, 6))
+plt.subplot(1, 2, 1)  # (行数, 列数, 当前子图索引)
+sns.histplot(y_train, kde=True, bins=30)
+plt.title('Distribution of Target Variable (y)')
+plt.xlabel('Target Value')
+plt.ylabel('Frequency')
+#plt.show()
+
+# #查看xy的分布
+# import pandas as pd
+#
+# # 合并X和y，计算相关系数
+data = pd.concat([X_train, pd.Series(y_train, name='target')], axis=1)
+corr = data.corr()
+# plt.subplot(1, 2, 2)
+# plt.figure(figsize=(12, 8))
+# sns.heatmap(corr, annot=True, cmap='coolwarm', center=0)
+# plt.title("特征与目标的相关性热力图")
+#plt.show()
+
+#无序类型
+categorical_features = ['weather', 'cargo_type', 'holiday_type','wind','time_type','buffer','road_state']
+
+train_dataset= lgb.Dataset(X_train, label=y_train,categorical_feature=categorical_features)
+valid_dataset = lgb.Dataset(X_valid_part, label=y_valid_part, reference=train_dataset,categorical_feature=categorical_features)
+# 无序分类
+monotone_constraints = [
+    1 if col == 'cargo_num' else (  # cargo_num 设为单调递增
+        -1 if col in ['port_rate', 'land_rate', 'truck_num'] else 0  # 其他三个特征递减
+    )
+    for col in X_train.columns.tolist()
+]
 # 2. 模型训练（基础版）
 # 创建 LightGBM 数据集对象
-train_dataset= lgb.Dataset(X_train, label=y_train)
-valid_dataset = lgb.Dataset(X_valid_part, label=y_valid_part, reference=train_dataset)
+# train_dataset= lgb.Dataset(X_train, label=y_train)
+# valid_dataset = lgb.Dataset(X_valid_part, label=y_valid_part, reference=train_dataset)
 
-# 对有序分类变量设置单调约束（以time_type为例）
-monotone_constraints =[-1 if col in ['time_type','weather',
-                         'road_state','holiday_type','truck_state',
-                         'wind', 'buffer','cargo_type'] else 0 for col in X_train.columns.tolist()]
+# # 对有序分类变量设置单调约束（以time_type为例）
+# monotone_constraints =[-1 if col in ['time_type','weather',
+#                          'road_state','holiday_type','truck_state',
+#                          'wind', 'buffer','cargo_type'] else 0 for col in X_train.columns.tolist()]
 
 
 # 参数设置：回归任务，使用 rmse 评估指标
 params = {
     'objective': 'regression',
     'metric': 'rmse',
-    'learning_rate': 0.015,  # 降低学习率
+    # 'learning_rate': 0.015,  # 降低学习率
     'num_leaves': 255,  # 限制叶子数，防止过拟合
     'max_depth': 12,  # 限制树的深度
     'min_data_in_leaf': 30,  # 增大叶子节点的最小样本数
@@ -135,37 +99,46 @@ params = {
     'monotone_constraints': monotone_constraints,  # 正确的列表格式
 }
 
+eval_result = {}
 
 # 训练模型，使用早停（这里只使用训练集做验证，实际项目中可使用独立验证集）
 model = lgb.train(
     params,
     train_dataset,
-    num_boost_round=2000,
+    num_boost_round=20000,
     valid_sets=[valid_dataset,train_dataset],
     valid_names=["valid","train"],
-    callbacks=[lgb.early_stopping(10),
+    callbacks=[lgb.early_stopping(100),
+               lgb.record_evaluation(eval_result),
             lgb.reset_parameter(learning_rate=[
-             0.1 if i < 100 else 0.02 if i < 500 else 0.01
-                for i in range(2000)])
+             0.03 if i < 300 else 0.01 if i < 1000 else 0.003
+                for i in range(20000)])
                ]
 )
 te=pd.DataFrame({
-    "time_type": 3,
-    "cargo_type": 2,
-    "truck_state": 2,
-    "road_state": 2,
-    "weather": 5,
-    "wind": 9,
+    "time_type": 1,
+    "cargo_type": 1,
+    "truck_state": 1,
+    "road_state": 1,
+    "weather": 1,
+    "wind": 2,
     "buffer": 1,
-    "holiday_type": 3,
+    "holiday_type":1 ,
     #"pre_land_time": 359.0748706,
-    "port_rate": 0.823004,
-    "land_rate": 1.11448064,
-    "truck_num": 2.7,
-    "cargo_num": 1.982153122
+   "port_rate":  0.76212576,
+    "land_rate": 0.90502434,
+    "truck_num": 2,
+    "cargo_num": 3.164788205
 },index=[0])
-y_pre=model.predict(te)
-print(y_pre)
+# 假设 model 是你的训练好的模型
+y_pred_log = model.predict(te)  # 预测的是 log(1 + y)
+
+# 还原到原始尺度
+y_pre = np.expm1(y_pred_log)      # y = exp(log(1 + y)) - 1
+print("模型预测值：",y_pre)
+# y_model,yreal=toCreateData(te,mappings,scaler)
+# print("反推值factor：",y_model)
+# print("直接计算值：",yreal)
 #lgb.plot_tree(model,tree_index=0)
 '''
 # 3. 超参数优化（网格搜索）
@@ -248,6 +221,21 @@ new_data = pd.DataFrame({
 prediction = best_model.predict(new_data)
 print("预测结果:", prediction)
 '''
+
+
+#loss可视化
+
+# 可视化
+plt.figure(figsize=(10, 6))
+plt.plot(eval_result['train']['rmse'], label='Train RMSE')
+plt.plot(eval_result['valid']['rmse'], label='Valid RMSE')
+plt.xlabel('Iteration')
+plt.ylabel('RMSE')
+plt.title('LightGBM Training Loss Curve')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
 
 # ======================
 # 7. 可视化结果
