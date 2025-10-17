@@ -3,26 +3,19 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import mean_squared_error
 from sklearn.feature_selection import RFE
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
-import seaborn as sns
 import lightgbm as lgb
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 force_col_wise= True
 #调用生成数据，生成后注释掉
 # preData.creatTrainData()
-data=pd.read_excel("land_train_data.xlsx")
-'''
-categorical_features = ['time_type', 'holiday_type', 'truck_state',
-                        'road_state', 'weather', 'wind', 'buffer', 'cargo_type']
-'''
+data=pd.read_excel("port_train_data.xlsx")
 # 划分特征和目标
-y1 = data['pre_land_time']
-X1 = data.drop(['pre_land_time', 'batch_id','p'], axis=1)
-
-#无序类型
-categorical_features = ['weather', 'cargo_type', 'holiday_type','wind','time_type','buffer','road_state', 'sub_task_type']
+y1 = data['pre_port_time']
+X1 = data.drop(['pre_port_time', 'batch_id'], axis=1)
 
 # 划分训练集/测试集
 X_train, X_test, y_train, y_test = train_test_split(X1, y1, test_size=0.2, random_state=42)
@@ -52,26 +45,21 @@ sns.heatmap(corr, annot=True, cmap='coolwarm', center=0)
 plt.title("特征与目标的相关性热力图")
 plt.show()
 
+# train_dataset= lgb.Dataset(X_train, label=y_train)
+#valid_dataset = lgb.Dataset(X_valid_part, label=y_valid_part, reference=train_dataset)
+
+# 无序类型（港口特定，无 sub_task_type/p/road_state/truck_level）
+categorical_features = ['weather', 'cargo_type', 'holiday_type', 'wind', 'time_type', 'buffer']
+
 train_dataset= lgb.Dataset(X_train, label=y_train,categorical_feature=categorical_features)
 valid_dataset = lgb.Dataset(X_valid_part, label=y_valid_part, reference=train_dataset,categorical_feature=categorical_features)
-
-# 单调约束
+#无序分类
 monotone_constraints = [
     1 if col == 'cargo_num' else (  # cargo_num 设为单调递增
-        -1 if col in ['port_rate', 'land_rate', 'truck_num'] else 0  # 其他三个特征递减
+        -1 if col in ['port_rate', 'port_rate', 'equip_num'] else 0  # 其他三个特征递减
     )
     for col in X_train.columns.tolist()
 ]
-# 2. 模型训练（基础版）
-# 创建 LightGBM 数据集对象
-# train_dataset= lgb.Dataset(X_train, label=y_train)
-# valid_dataset = lgb.Dataset(X_valid_part, label=y_valid_part, reference=train_dataset)
-
-# # 对有序分类变量设置单调约束（以time_type为例）
-# monotone_constraints =[-1 if col in ['time_type','weather',
-#                          'road_state','holiday_type','truck_state',
-#                          'wind', 'buffer','cargo_type'] else 0 for col in X_train.columns.tolist()]
-
 
 # 参数设置：回归任务，使用 rmse 评估指标
 params = {
@@ -90,7 +78,7 @@ params = {
     'cat_smooth': 30,  # 改善分类变量处理
    # 'boosting_type': 'dart' , # 使用DART模式应对异常值
     'verbosity': -1,
-    'monotone_constraints': monotone_constraints,  # 正确的列表格式
+    # 'monotone_constraints': monotone_constraints,  # 正确的列表格式
 }
 
 eval_result = {}
@@ -109,40 +97,21 @@ model = lgb.train(
                 for i in range(20000)])
                ]
 )
-'''
-
 te=pd.DataFrame({
     "time_type": 1,
     "cargo_type": 1,
-    "truck_level": 1,
-    "road_state": 1,
+    "equip_level": 5,
     "weather": 1,
-    "wind": 2,
+    "wind": 9,
     "buffer": 1,
     "holiday_type":1 ,
-    #"pre_land_time": 359.0748706,
-   "port_rate":  0.76212576,
-    "land_rate": 0.90502434,
-    "truck _num": 2,
-    "cargo_num": 3.164788205
+    #"pre_port_time": 8.352778007
+   "port_rate":  0.06671808,
+    "land_rate": 0.10216206,
+    "equip_num": 1,
+    "cargo_num": 3.767317839
 },index=[0])
-'''
-te=pd.DataFrame({
-    "time_type": 2,
-    "cargo_type": 2,
-    "truck_level": 1,
-    "road_state": 1,
-    "weather": 3,
-    "wind": 1,
-    "buffer": 1,
-    "holiday_type":3 ,
-    #"pre_land_time": 5.262793365,
-   "port_rate": 0.2279088,
-    "land_rate": 0.28933632,
-    "truck_num": 4,
-    "cargo_num": 1.02142574,
-"sub_task_type": 1,  # 1 for direct
-},index=[0])
+
 
 # 假设 model 是你的训练好的模型
 y_pred_log = model.predict(te)  # 预测的是 log(1 + y)
@@ -184,7 +153,10 @@ print(f"相对 RMSE: {relative_rmse:.2f}%")
 mape = np.mean(np.abs((y_test - y_pred) / y_test)) * 100
 print(f"MAPE: {mape:.2f}%")
 
+
 #loss可视化
+
+# 可视化
 plt.figure(figsize=(10, 6))
 plt.plot(eval_result['train']['rmse'], label='Train RMSE')
 plt.plot(eval_result['valid']['rmse'], label='Valid RMSE')
@@ -195,33 +167,3 @@ plt.legend()
 plt.grid(True)
 plt.tight_layout()
 plt.show()
-
-# ======================
-# 7. 可视化结果
-# ======================
-# 绘制真实值与预测值的散点图，并添加 y=x 对角线
-'''
-plt.figure(figsize=(8, 6))
-plt.scatter(y_test, y_pred, alpha=0.5, label="预测结果")
-plt.plot([min(y_test), max(y_test)], [min(y_test), max(y_test)], color='red', linestyle='--', label="理想情况")
-plt.xlabel("true value")
-plt.ylabel("predict value")
-plt.title("true and predict value")
-plt.legend()
-plt.show()
-'''
-
-
-'''
-residuals = y_test - y_pred
-plt.figure(figsize=(8, 6))
-plt.scatter(y_test, residuals, alpha=0.5, label="残差")
-plt.axhline(0, color='red', linestyle='--', label="零误差线")
-plt.xlabel("真实值")
-plt.ylabel("真实值与预测值之差")
-plt.title("残差图")
-plt.legend()
-plt.show()
-'''
-
-

@@ -3,8 +3,8 @@ from datetime import datetime
 import holidays
 import numpy as np
 
-# 基础速度设定（单位：吨/min）
-land_base_speed = 1  # 单设备速度
+# 基础速度设定（单位：吨/min）300 t/h
+land_base_speed = 5  # 陆运平均速度
 
 # 定义货物种类及影响因子
 CARGO_TYPES = ['A', 'B', 'C', 'D']
@@ -29,8 +29,8 @@ truck_impact = {"优": 1.0, "良": 0.8, "中": 0.6, "差": 0.4, "极差": 0.2}
 # 定义有无缓冲区
 buffer_impact = {"有": 0.9, "无": 0.65}
 
-# 港口理想状态下的单设备速度（吨/min）
-port_base_speed = 1
+# 港口理想状态下的平均速度（吨/min） 1500 t/h
+port_base_speed = 25
 
 port_holiday_impact = {"工作日": 1.0, "周末": 0.9, "小长假": 0.8, "大长假": 0.7}
 # 定义设备状态及对应数值/概率
@@ -133,11 +133,11 @@ def get_port_weather_factor(weather):
         "阴": 0.97,
         "多云": 0.95,
         "小雨": 0.90,
-        "中雨": 0.85,
-        "大雨": 0.80,
-        "暴雨": 0.7,
-        "雨夹雪": 0.8,
+        "中雨": 0.8,
+        "大雨": 0.7,
+        "雨夹雪": 0.75,
         "雾": 0.80,
+
     }
     return mapping.get(weather, 1.0)
 

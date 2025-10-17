@@ -49,15 +49,6 @@ def get_holiday_state(date):
     else:
         return "工作日"
 
-# 计算最终影响因子
-def get_road_factor(weather_factor, time_factor,date):
-
-    # 计算最终影响因子
-    random_adjustment = random.uniform(0.9, 1.1)  # 随机调整
-    # 加权求和 + 乘法调整
-    final_factor = round((0.4 * weather_factor + 0.3 * time_factor + 0.2 * holiday_factor) * random_adjustment, 2)
-    return final_factor
-
 # 定义陆运的天气因子映射（归一化到0～1）
 def get_land_weather_factor(weather):
     """
