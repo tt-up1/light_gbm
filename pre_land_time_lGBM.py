@@ -40,7 +40,7 @@ sns.histplot(y_train, kde=True, bins=30)
 plt.title('Distribution of Target Variable (y)')
 plt.xlabel('Target Value')
 plt.ylabel('Frequency')
-#plt.show()
+plt.show()
 
 # #查看xy的分布
 # # 合并X和y，计算相关系数
@@ -92,7 +92,7 @@ params = {
     'verbosity': -1,
     'monotone_constraints': monotone_constraints,  # 正确的列表格式
 }
-
+嗯
 eval_result = {}
 
 # 训练模型，使用早停（这里只使用训练集做验证，实际项目中可使用独立验证集）
